@@ -1,47 +1,23 @@
 import json
 import re
 import sys
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 
 import requests
 from bs4 import BeautifulSoup
-
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; company-profile-lite/1.0)"
 }
 
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
-
-# Require phone-like chunks with enough separators/spaces to avoid year ranges.
-PHONE_RE = re.compile(
-    r"(?<!\w)(\+?\d[\d\s().-]{8,}\d)(?!\w)"
-)
+PHONE_RE = re.compile(r"(?<!\w)(\+?\d[\d\s().-]{8,}\d)(?!\w)")
 
 LOCATION_HINTS = [
-    "new york",
-    "san francisco",
-    "london",
-    "paris",
-    "madrid",
-    "barcelona",
-    "berlin",
-    "dubai",
-    "riyadh",
-    "singapore",
-    "toronto",
-    "sydney",
-    "spain",
-    "france",
-    "germany",
-    "uk",
-    "united kingdom",
-    "usa",
-    "united states",
-    "canada",
-    "saudi arabia",
-    "uae",
-    "morocco",
+    "new york", "san francisco", "london", "paris", "madrid", "barcelona",
+    "berlin", "dubai", "riyadh", "singapore", "toronto", "sydney",
+    "spain", "france", "germany", "uk", "united kingdom", "usa",
+    "united states", "canada", "saudi arabia", "uae", "morocco",
 ]
 
 
@@ -58,7 +34,7 @@ def fetch_html(url: str) -> str:
     return response.text
 
 
-def soup_from_url(url: str) -> BeautifulSoup | None:
+def soup_from_url(url: str):
     try:
         html = fetch_html(url)
         return BeautifulSoup(html, "html.parser")
@@ -70,7 +46,7 @@ def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def get_meta_content(soup: BeautifulSoup, *attrs: tuple[str, str]) -> str | None:
+def get_meta_content(soup: BeautifulSoup, *attrs):
     for attr_name, attr_value in attrs:
         tag = soup.find("meta", attrs={attr_name: attr_value})
         if tag and tag.get("content"):
@@ -114,45 +90,71 @@ def guess_description(soup: BeautifulSoup) -> str:
     return ""
 
 
-def extract_emails(text: str) -> list[str]:
-    emails = sorted(set(EMAIL_RE.findall(text)))
-    return emails[:10]
+def extract_emails(text: str):
+    return sorted(set(EMAIL_RE.findall(text)))[:10]
 
 
-def looks_like_year_or_range(cleaned: str, digits: str) -> bool:
+def normalize_phone(phone: str) -> str:
+    phone = unquote(phone)
+    phone = phone.replace("tel:", "").replace("telephone:", "")
+    phone = re.sub(r"[^\d+().\-\s]", "", phone)
+    return clean_text(phone).strip(" -.")
+
+
+def looks_like_dateish(cleaned: str, digits: str) -> bool:
+    parts = [p for p in re.split(r"[\s\-/.()]+", cleaned) if p]
+
     if re.fullmatch(r"(19|20)\d{2}", digits):
         return True
 
     if re.fullmatch(r"(19|20)\d{2}(19|20)\d{2}", digits):
         return True
 
-    if re.fullmatch(r"(19|20)\d{2}\s*[-–—]\s*(19|20)\d{2}", cleaned):
-        return True
+    if len(parts) >= 3:
+        if (
+            re.fullmatch(r"(19|20)\d{2}", parts[0])
+            and re.fullmatch(r"(0?[1-9]|1[0-2])", parts[1])
+            and re.fullmatch(r"(0?[1-9]|[12]\d|3[01])", parts[2])
+        ):
+            return True
+
+    if len(parts) >= 4:
+        if (
+            re.fullmatch(r"(19|20)\d{2}", parts[0])
+            and re.fullmatch(r"(19|20)\d{2}", parts[1])
+            and re.fullmatch(r"(0?[1-9]|1[0-2])", parts[2])
+            and re.fullmatch(r"(0?[1-9]|[12]\d|3[01])", parts[3])
+        ):
+            return True
+
+    group_lengths = tuple(len(p) for p in parts if p.isdigit())
+    if group_lengths in {(4, 2, 2), (4, 4), (4, 4, 2), (4, 4, 2, 2)}:
+        if any(re.fullmatch(r"(19|20)\d{2}", p) for p in parts):
+            return True
 
     return False
 
 
-def extract_phones(text: str) -> list[str]:
+def extract_phones_from_text(text: str):
     raw = PHONE_RE.findall(text)
     phones = []
     seen = set()
 
     for phone in raw:
-        cleaned = clean_text(phone)
+        cleaned = normalize_phone(phone)
         digits = re.sub(r"\D", "", cleaned)
 
         if len(digits) < 10 or len(digits) > 15:
             continue
 
-        if looks_like_year_or_range(cleaned, digits):
+        if looks_like_dateish(cleaned, digits):
             continue
 
-        # Require actual phone formatting signals.
         formatting_signals = (
             "+" in cleaned
             or "(" in cleaned
             or ")" in cleaned
-            or cleaned.count(" ") >= 1
+            or cleaned.count(" ") >= 2
             or cleaned.count("-") >= 2
             or cleaned.count(".") >= 2
         )
@@ -166,7 +168,23 @@ def extract_phones(text: str) -> list[str]:
     return phones[:10]
 
 
-def extract_socials(soup: BeautifulSoup) -> dict[str, str]:
+def extract_tel_links(soup: BeautifulSoup):
+    phones = []
+    seen = set()
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.lower().startswith("tel:"):
+            cleaned = normalize_phone(href)
+            digits = re.sub(r"\D", "", cleaned)
+            if 10 <= len(digits) <= 15 and cleaned not in seen:
+                seen.add(cleaned)
+                phones.append(cleaned)
+
+    return phones[:10]
+
+
+def extract_socials(soup: BeautifulSoup):
     socials = {}
 
     for a in soup.find_all("a", href=True):
@@ -187,7 +205,7 @@ def extract_socials(soup: BeautifulSoup) -> dict[str, str]:
     return socials
 
 
-def extract_candidate_pages(base_url: str, soup: BeautifulSoup) -> list[str]:
+def extract_candidate_pages(base_url: str, soup: BeautifulSoup):
     candidates = []
     seen = set()
 
@@ -202,7 +220,7 @@ def extract_candidate_pages(base_url: str, soup: BeautifulSoup) -> list[str]:
     return candidates[:2]
 
 
-def find_locations(text: str) -> list[str]:
+def find_locations(text: str):
     text_lower = text.lower()
     found = []
 
@@ -217,7 +235,16 @@ def extract_text_from_soup(soup: BeautifulSoup) -> str:
     return clean_text(soup.get_text(" ", strip=True))
 
 
-def extract_company_profile(url: str) -> dict:
+def merge_unique(existing, new_values):
+    seen = set(existing)
+    for value in new_values:
+        if value not in seen:
+            existing.append(value)
+            seen.add(value)
+    return existing
+
+
+def extract_company_profile(url: str):
     url = normalize_url(url)
     parsed = urlparse(url)
     domain = parsed.netloc or parsed.path
@@ -231,24 +258,31 @@ def extract_company_profile(url: str) -> dict:
 
     combined_text_parts = [extract_text_from_soup(homepage_soup)]
     socials = extract_socials(homepage_soup)
+    phones = extract_tel_links(homepage_soup)
 
     for extra_url in extract_candidate_pages(url, homepage_soup):
         extra_soup = soup_from_url(extra_url)
         if extra_soup is None:
             continue
+
         combined_text_parts.append(extract_text_from_soup(extra_soup))
+        merge_unique(phones, extract_tel_links(extra_soup))
+
         extra_socials = extract_socials(extra_soup)
         for key, value in extra_socials.items():
             socials.setdefault(key, value)
 
     combined_text = " ".join(combined_text_parts)
 
+    if not phones:
+        phones = extract_phones_from_text(combined_text)
+
     return {
         "url": url,
         "company_name": guess_company_name(homepage_soup, domain),
         "description": guess_description(homepage_soup),
         "emails": extract_emails(combined_text),
-        "phones": extract_phones(combined_text),
+        "phones": phones[:10],
         "socials": socials,
         "locations": find_locations(combined_text),
     }
