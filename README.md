@@ -19,5 +19,16 @@ This is a lightweight, useful community agent that can later grow into richer en
 
 ## Example input
 
-```python
-url = "https://example.com"
+{
+  "company_name": "Example Inc.",
+  "description": "Example provides software for modern teams.",
+  "emails": ["hello@example.com"],
+  "phones": ["+1 555 123 4567"],
+  "socials": {
+    "linkedin": "https://linkedin.com/company/example",
+    "twitter": "https://twitter.com/example"
+  },
+  "locations": ["New York, USA"]
+}
+
+
