@@ -12,14 +12,36 @@ HEADERS = {
 }
 
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
+
+# Require phone-like chunks with enough separators/spaces to avoid year ranges.
 PHONE_RE = re.compile(
-    r"(?:(?:\+?\d{1,3}[\s().-]?)?(?:\d[\s().-]?){7,}\d)"
+    r"(?<!\w)(\+?\d[\d\s().-]{8,}\d)(?!\w)"
 )
+
 LOCATION_HINTS = [
-    "new york", "san francisco", "london", "paris", "madrid", "barcelona",
-    "berlin", "dubai", "riyadh", "singapore", "toronto", "sydney",
-    "spain", "france", "germany", "uk", "united kingdom", "usa",
-    "united states", "canada", "saudi arabia", "uae", "morocco"
+    "new york",
+    "san francisco",
+    "london",
+    "paris",
+    "madrid",
+    "barcelona",
+    "berlin",
+    "dubai",
+    "riyadh",
+    "singapore",
+    "toronto",
+    "sydney",
+    "spain",
+    "france",
+    "germany",
+    "uk",
+    "united kingdom",
+    "usa",
+    "united states",
+    "canada",
+    "saudi arabia",
+    "uae",
+    "morocco",
 ]
 
 
@@ -97,6 +119,19 @@ def extract_emails(text: str) -> list[str]:
     return emails[:10]
 
 
+def looks_like_year_or_range(cleaned: str, digits: str) -> bool:
+    if re.fullmatch(r"(19|20)\d{2}", digits):
+        return True
+
+    if re.fullmatch(r"(19|20)\d{2}(19|20)\d{2}", digits):
+        return True
+
+    if re.fullmatch(r"(19|20)\d{2}\s*[-–—]\s*(19|20)\d{2}", cleaned):
+        return True
+
+    return False
+
+
 def extract_phones(text: str) -> list[str]:
     raw = PHONE_RE.findall(text)
     phones = []
@@ -105,8 +140,25 @@ def extract_phones(text: str) -> list[str]:
     for phone in raw:
         cleaned = clean_text(phone)
         digits = re.sub(r"\D", "", cleaned)
-        if len(digits) < 8 or len(digits) > 15:
+
+        if len(digits) < 10 or len(digits) > 15:
             continue
+
+        if looks_like_year_or_range(cleaned, digits):
+            continue
+
+        # Require actual phone formatting signals.
+        formatting_signals = (
+            "+" in cleaned
+            or "(" in cleaned
+            or ")" in cleaned
+            or cleaned.count(" ") >= 1
+            or cleaned.count("-") >= 2
+            or cleaned.count(".") >= 2
+        )
+        if not formatting_signals:
+            continue
+
         if cleaned not in seen:
             seen.add(cleaned)
             phones.append(cleaned)
