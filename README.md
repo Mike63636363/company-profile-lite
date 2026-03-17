@@ -30,5 +30,22 @@ This is a lightweight, useful community agent that can later grow into richer en
   },
   "locations": ["New York, USA"]
 }
+## Limitations
 
+This MVP works best on scrape-friendly public HTML websites.
+
+It may return partial results for:
+- JavaScript-heavy sites
+- bot-protected sites
+- websites with minimal visible public text
+
+Typical strong fields:
+- company name
+- meta description
+- social links when present in HTML
+
+Typical weak fields on modern sites:
+- phones
+- emails
+- deeper company details
 
